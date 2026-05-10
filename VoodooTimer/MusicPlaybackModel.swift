@@ -67,7 +67,7 @@ final class MusicPlaybackModel {
     guard authorizationStatus == .authorized else {
       title = "Apple Music"
       subtitle =
-        authorizationStatus == .notDetermined ? "Tap Play" : "Access Off"
+        authorizationStatus == .notDetermined ? "Tap Play" : "Access Blocked"
       artwork = nil
       return
     }
