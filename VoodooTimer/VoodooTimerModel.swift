@@ -1,8 +1,10 @@
 //  VoodooTimer is owned by Kevin Herro.
 
+import ActivityKit
+import AlarmKit
 import Foundation
 import Observation
-import UserNotifications
+import SwiftUI
 
 @MainActor
 @Observable
@@ -38,10 +40,11 @@ final class VoodooTimerModel {
   var pauseResumeFeedbackTrigger = 0
   var finishFeedbackTrigger = 0
 
-  private let notifications = VoodooTimerNotificationScheduler()
+  private let alarms = VoodooTimerAlarmScheduler()
   private var lastTapDate: Date?
   private var tapStreak = 0
   private var finishTask: Task<Void, Never>?
+  private var alarmTask: Task<Void, Never>?
 
   func remaining(at date: Date = .now) -> TimeInterval {
     switch mode {
@@ -75,7 +78,7 @@ final class VoodooTimerModel {
     adjustment = nil
     clearTapCadence()
     cancelLocalFinish()
-    notifications.cancelVoodooTimerFinished()
+    cancelAlarm()
   }
 
   func clear() {
@@ -120,7 +123,7 @@ final class VoodooTimerModel {
       pauseResumeFeedbackTrigger += 1
       clearTapCadence()
       cancelLocalFinish()
-      notifications.cancelVoodooTimerFinished()
+      cancelAlarm()
     case .paused:
       let duration = max(1, pausedRemaining ?? selectedDuration)
       mode = .running
@@ -163,7 +166,7 @@ final class VoodooTimerModel {
       endDate = nil
       pausedRemaining = newRemaining
       cancelLocalFinish()
-      notifications.cancelVoodooTimerFinished()
+      cancelAlarm()
     case .setup, .finished:
       break
     }
@@ -175,7 +178,7 @@ final class VoodooTimerModel {
     endDate = date.addingTimeInterval(duration)
     pausedRemaining = nil
     scheduleLocalFinish(after: duration)
-    notifications.scheduleVoodooTimerFinished(after: duration)
+    scheduleAlarm(at: date.addingTimeInterval(duration))
   }
 
   private func finish() {
@@ -186,7 +189,6 @@ final class VoodooTimerModel {
     clearTapCadence()
     cancelLocalFinish()
     finishFeedbackTrigger += 1
-    notifications.cancelVoodooTimerFinished()
   }
 
   private func showAdjustment(_ seconds: Int) {
@@ -217,6 +219,21 @@ final class VoodooTimerModel {
   private func cancelLocalFinish() {
     finishTask?.cancel()
     finishTask = nil
+  }
+
+  private func scheduleAlarm(at date: Date) {
+    alarmTask?.cancel()
+    alarms.cancelVoodooTimerFinished()
+
+    alarmTask = Task { [alarms] in
+      await alarms.scheduleVoodooTimerFinished(at: date)
+    }
+  }
+
+  private func cancelAlarm() {
+    alarmTask?.cancel()
+    alarmTask = nil
+    alarms.cancelVoodooTimerFinished()
   }
 
   private func seekAmount(at date: Date) -> Int {
@@ -251,49 +268,43 @@ final class VoodooTimerModel {
   }
 }
 
-struct VoodooTimerNotificationScheduler: Sendable {
-  private let identifier = "timer.finished"
+struct VoodooTimerAlarmMetadata: AlarmMetadata {}
 
-  func scheduleVoodooTimerFinished(after interval: TimeInterval) {
-    let interval = max(1, interval)
+struct VoodooTimerAlarmScheduler: Sendable {
+  private let identifier = UUID(
+    uuidString: "64C91961-9608-4E15-903E-8544D746C086")!
 
-    Task {
-      let center = UNUserNotificationCenter.current()
-      let settings = await center.notificationSettings()
+  func scheduleVoodooTimerFinished(at date: Date) async {
+    let manager = AlarmManager.shared
+    let state: AlarmManager.AuthorizationState
 
-      let isAuthorized: Bool
-      switch settings.authorizationStatus {
-      case .authorized, .ephemeral, .provisional:
-        isAuthorized = true
-      case .notDetermined:
-        isAuthorized =
-          (try? await center.requestAuthorization(options: [.alert, .sound]))
-          == true
-      case .denied:
-        isAuthorized = false
-      @unknown default:
-        isAuthorized = false
-      }
-
-      guard isAuthorized else { return }
-
-      center.removePendingNotificationRequests(withIdentifiers: [identifier])
-
-      let content = UNMutableNotificationContent()
-      content.title = "VoodooTimer"
-      content.body = "Time is up."
-      content.sound = .default
-
-      let trigger = UNTimeIntervalNotificationTrigger(
-        timeInterval: interval, repeats: false)
-      let request = UNNotificationRequest(
-        identifier: identifier, content: content, trigger: trigger)
-      try? await center.add(request)
+    if manager.authorizationState == .notDetermined {
+      state = (try? await manager.requestAuthorization()) ?? .denied
+    } else {
+      state = manager.authorizationState
     }
+
+    guard state == .authorized, !Task.isCancelled else { return }
+
+    try? manager.cancel(id: identifier)
+
+    let presentation = AlarmPresentation(
+      alert: .init(title: "VoodooTimer"))
+    let attributes = AlarmAttributes<VoodooTimerAlarmMetadata>(
+      presentation: presentation, tintColor: .black)
+    let configuration = AlarmManager.AlarmConfiguration.alarm(
+      schedule: .fixed(max(date, .now.addingTimeInterval(1))),
+      attributes: attributes,
+      sound: .default)
+
+    guard !Task.isCancelled else { return }
+    _ = try? await manager.schedule(
+      id: identifier, configuration: configuration)
   }
 
   func cancelVoodooTimerFinished() {
-    UNUserNotificationCenter.current().removePendingNotificationRequests(
-      withIdentifiers: [identifier])
+    let manager = AlarmManager.shared
+    try? manager.stop(id: identifier)
+    try? manager.cancel(id: identifier)
   }
 }
