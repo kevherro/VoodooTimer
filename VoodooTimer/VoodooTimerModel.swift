@@ -9,7 +9,7 @@ import SwiftUI
 @MainActor
 @Observable
 final class VoodooTimerModel {
-  enum Mode: Sendable {
+  enum Mode: Equatable, Sendable {
     case setup
     case running
     case paused

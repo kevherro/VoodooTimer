@@ -1,6 +1,7 @@
 //  VoodooTimer is owned by Kevin Herro.
 
 import SwiftUI
+import UIKit
 
 struct ContentView: View {
   @Environment(\.scenePhase) private var scenePhase
@@ -16,10 +17,15 @@ struct ContentView: View {
         let timerHeight = readoutFontSize * 1.74
         let musicHeight: CGFloat = isLandscape ? 64 : 62
         let musicSpacing: CGFloat = isLandscape ? 24 : 18
-        let groupHeight = timerHeight + musicSpacing + musicHeight
+        let showsMusic = music.isPlaying
+        let visibleMusicHeight: CGFloat = showsMusic ? musicHeight : 0
+        let visibleMusicSpacing: CGFloat = showsMusic ? musicSpacing : 0
+        let groupHeight =
+          timerHeight + visibleMusicSpacing + visibleMusicHeight
         let portraitLift = isLandscape ? 0 : min(120, proxy.size.height * 0.075)
         let centeredGroupY =
-          proxy.size.height / 2 + (musicHeight + musicSpacing) / 2
+          proxy.size.height / 2
+          + (visibleMusicHeight + visibleMusicSpacing) / 2
           - portraitLift
         let lowestGroupY = proxy.size.height - 18 - groupHeight / 2
         let groupY = min(centeredGroupY, max(groupHeight / 2, lowestGroupY))
@@ -34,8 +40,10 @@ struct ContentView: View {
             )
             .frame(height: timerHeight)
 
-            Color.clear
-              .frame(height: musicHeight)
+            if showsMusic {
+              Color.clear
+                .frame(height: musicHeight)
+            }
           }
           .padding(.horizontal, 28)
           .position(x: proxy.size.width / 2, y: groupY)
@@ -43,16 +51,19 @@ struct ContentView: View {
           InteractionLayer(size: proxy.size, timer: timer)
             .ignoresSafeArea()
 
-          VStack(spacing: musicSpacing) {
-            Color.clear
-              .frame(height: timerHeight)
-              .allowsHitTesting(false)
+          if showsMusic {
+            VStack(spacing: musicSpacing) {
+              Color.clear
+                .frame(height: timerHeight)
+                .allowsHitTesting(false)
 
-            MusicPlaybackControls(
-              music: music, isLandscape: isLandscape, height: musicHeight)
+              MusicPlaybackControls(
+                music: music, isLandscape: isLandscape, height: musicHeight)
+            }
+            .padding(.horizontal, 28)
+            .position(x: proxy.size.width / 2, y: groupY)
+            .transition(.opacity)
           }
-          .padding(.horizontal, 28)
-          .position(x: proxy.size.width / 2, y: groupY)
         }
       }
       .onChange(of: context.date) { _, date in
@@ -72,10 +83,29 @@ struct ContentView: View {
       trigger: timer.pauseResumeFeedbackTrigger
     )
     .sensoryFeedback(.success, trigger: timer.finishFeedbackTrigger)
-    .onChange(of: scenePhase) { _, newPhase in
-      guard newPhase == .active else { return }
-      music.refreshFromForeground()
+    .onAppear {
+      music.refresh()
+      updateIdleTimer()
     }
+    .onDisappear {
+      UIApplication.shared.isIdleTimerDisabled = false
+    }
+    .onChange(of: timer.mode) {
+      updateIdleTimer()
+    }
+    .onChange(of: scenePhase) { _, newPhase in
+      if newPhase == .active {
+        music.refreshFromForeground()
+      }
+
+      updateIdleTimer()
+    }
+    .animation(.easeInOut(duration: 0.18), value: music.isPlaying)
+  }
+
+  private func updateIdleTimer() {
+    UIApplication.shared.isIdleTimerDisabled =
+      scenePhase == .active && timer.mode == .running
   }
 }
 
