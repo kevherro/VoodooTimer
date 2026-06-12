@@ -8,6 +8,8 @@ struct ContentView: View {
 
   @State private var timer = VoodooTimerModel()
   @State private var music = MusicPlaybackModel()
+  @State private var durationInputText = ""
+  @FocusState private var durationInputIsFocused: Bool
 
   var body: some View {
     TimelineView(.periodic(from: .now, by: 0.2)) { context in
@@ -29,10 +31,19 @@ struct ContentView: View {
           - portraitLift
         let lowestGroupY = proxy.size.height - 18 - groupHeight / 2
         let groupY = min(centeredGroupY, max(groupHeight / 2, lowestGroupY))
+        let durationEntryButtonX = min(
+          proxy.size.width - (isLandscape ? 54 : 42),
+          proxy.size.width / 2 + readoutFontSize * 2
+        )
+        let durationEntryButtonY =
+          groupY + readoutFontSize * (isLandscape ? 0.54 : 0.62)
 
         ZStack {
           Theme.background
             .ignoresSafeArea()
+
+          durationKeyboardInput
+            .position(x: 1, y: 1)
 
           VStack(spacing: musicSpacing) {
             VoodooTimerFace(
@@ -50,6 +61,14 @@ struct ContentView: View {
 
           InteractionLayer(size: proxy.size, timer: timer)
             .ignoresSafeArea()
+
+          if timer.mode == .setup {
+            DurationEntryButton(
+              isActive: durationInputIsFocused,
+              action: beginDurationEntry
+            )
+            .position(x: durationEntryButtonX, y: durationEntryButtonY)
+          }
 
           if showsMusic {
             VStack(spacing: musicSpacing) {
@@ -91,6 +110,10 @@ struct ContentView: View {
       UIApplication.shared.isIdleTimerDisabled = false
     }
     .onChange(of: timer.mode) {
+      if timer.mode != .setup {
+        finishDurationEntry()
+      }
+
       updateIdleTimer()
     }
     .onChange(of: scenePhase) { _, newPhase in
@@ -101,6 +124,77 @@ struct ContentView: View {
       updateIdleTimer()
     }
     .animation(.easeInOut(duration: 0.18), value: music.isPlaying)
+    .toolbar {
+      if durationInputIsFocused {
+        ToolbarItemGroup(placement: .keyboard) {
+          Button("Clear", action: clearDurationEntry)
+
+          Spacer()
+
+          Button("Done", action: finishDurationEntry)
+
+          Button("Start", action: startDurationEntry)
+            .disabled(timer.selectedDuration <= 0)
+        }
+      }
+    }
+  }
+
+  private var durationKeyboardInput: some View {
+    TextField("Duration", text: $durationInputText)
+      .keyboardType(.numberPad)
+      .textInputAutocapitalization(.never)
+      .disableAutocorrection(true)
+      .focused($durationInputIsFocused)
+      .frame(width: 1, height: 1)
+      .opacity(0.01)
+      .accessibilityHidden(true)
+      .onChange(of: durationInputText) { _, newValue in
+        updateDurationInput(to: newValue)
+      }
+  }
+
+  private func beginDurationEntry() {
+    guard timer.mode == .setup else { return }
+
+    if !durationInputIsFocused {
+      durationInputText = ""
+    }
+
+    durationInputIsFocused = true
+  }
+
+  private func updateDurationInput(to newValue: String) {
+    guard durationInputIsFocused else { return }
+
+    let digits =
+      newValue
+      .compactMap(\.wholeNumberValue)
+      .prefix(2)
+      .map(String.init)
+      .joined()
+
+    guard durationInputText == digits else {
+      durationInputText = digits
+      return
+    }
+
+    timer.setSetupDuration(minutes: Int(digits) ?? 0)
+  }
+
+  private func clearDurationEntry() {
+    durationInputText = ""
+    timer.setSetupDuration(minutes: 0)
+  }
+
+  private func finishDurationEntry() {
+    durationInputIsFocused = false
+    durationInputText = ""
+  }
+
+  private func startDurationEntry() {
+    finishDurationEntry()
+    timer.primaryAction()
   }
 
   private func updateIdleTimer() {
@@ -318,6 +412,31 @@ private struct MusicPlaybackControls: View {
     }
     .buttonStyle(.plain)
     .accessibilityLabel(label)
+  }
+}
+
+private struct DurationEntryButton: View {
+  let isActive: Bool
+  let action: () -> Void
+
+  var body: some View {
+    Button(action: action) {
+      Image(systemName: "keyboard")
+        .font(.system(size: 17, weight: .semibold))
+        .foregroundStyle(isActive ? Theme.paper : Theme.ink)
+        .frame(width: 42, height: 36)
+        .background {
+          Rectangle()
+            .fill(isActive ? Theme.ink : Theme.paper.opacity(0.86))
+        }
+        .overlay {
+          Rectangle()
+            .stroke(Theme.ink.opacity(isActive ? 1 : 0.2), lineWidth: 1)
+        }
+        .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .accessibilityLabel("Enter Duration")
   }
 }
 

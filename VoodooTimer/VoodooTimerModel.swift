@@ -86,6 +86,15 @@ final class VoodooTimerModel {
     selectedDuration = 0
   }
 
+  func setSetupDuration(minutes: Int) {
+    guard mode == .setup else { return }
+
+    let clampedMinutes = min(max(minutes, 0), 99)
+    selectedDuration = TimeInterval(clampedMinutes * 60)
+    adjustment = nil
+    clearTapCadence()
+  }
+
   func addThirtySeconds(at date: Date = .now) {
     adjustTime(by: 30, at: date)
   }
